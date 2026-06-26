@@ -1,34 +1,51 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from 'react-leaflet';
+import {
+  MapContainer,
+  TileLayer,
+  Marker,
+  Popup,
+  Polyline,
+  useMap,
+} from 'react-leaflet';
 import L from 'leaflet';
 import { Location, DriverLocation } from '@/lib/types';
 import 'leaflet/dist/leaflet.css';
 
-// Icons
+/* =========================
+   ICONS
+========================= */
 const startIcon = new L.Icon({
-  iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-green.png',
-  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
+  iconUrl:
+    'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-green.png',
+  shadowUrl:
+    'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
   iconSize: [25, 41],
   iconAnchor: [12, 41],
 });
 
 const endIcon = new L.Icon({
-  iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-red.png',
-  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
+  iconUrl:
+    'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-red.png',
+  shadowUrl:
+    'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
   iconSize: [25, 41],
   iconAnchor: [12, 41],
 });
 
 const driverIcon = new L.Icon({
-  iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-blue.png',
-  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
+  iconUrl:
+    'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-blue.png',
+  shadowUrl:
+    'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
   iconSize: [25, 41],
   iconAnchor: [12, 41],
 });
 
-// Map controller
+/* =========================
+   MAP CONTROLLER (GPS follow)
+========================= */
 function MapController({
   driverLocation,
   departureLocation,
@@ -39,41 +56,38 @@ function MapController({
   arrivalLocation: Location;
 }) {
   const map = useMap();
-  const lastRef = useRef<DriverLocation | null>(null);
+  const lastDriverRef = useRef<DriverLocation | null>(null);
+  const didFitRef = useRef(false);
 
   useEffect(() => {
-    if (!driverLocation) return;
-
-    const changed =
-      !lastRef.current ||
-      Math.abs(driverLocation.lat - lastRef.current.lat) > 0.0001 ||
-      Math.abs(driverLocation.lng - lastRef.current.lng) > 0.0001;
-
-    if (changed) {
-      map.panTo([driverLocation.lat, driverLocation.lng], {
-        animate: true,
-      });
-
-      lastRef.current = driverLocation;
-    }
-  }, [driverLocation, map]);
-
-  useEffect(() => {
+    if (didFitRef.current) return;
     const bounds = L.latLngBounds([
       [departureLocation.lat, departureLocation.lng],
       [arrivalLocation.lat, arrivalLocation.lng],
     ]);
-
-    if (driverLocation) {
-      bounds.extend([driverLocation.lat, driverLocation.lng]);
-    }
-
     map.fitBounds(bounds, { padding: [50, 50], maxZoom: 15 });
-  }, []);
+    didFitRef.current = true;
+  }, [map, departureLocation, arrivalLocation]);
+
+  useEffect(() => {
+    if (!driverLocation) return;
+    const last = lastDriverRef.current;
+    const moved =
+      !last ||
+      Math.abs(driverLocation.lat - last.lat) > 0.0003 ||
+      Math.abs(driverLocation.lng - last.lng) > 0.0003;
+    if (moved) {
+      map.panTo([driverLocation.lat, driverLocation.lng], { animate: true });
+      lastDriverRef.current = driverLocation;
+    }
+  }, [driverLocation, map]);
 
   return null;
 }
 
+/* =========================
+   MAIN COMPONENT
+========================= */
 interface RideMapProps {
   departureLocation?: Location;
   arrivalLocation?: Location;
@@ -92,31 +106,54 @@ export default function RideMap({
   showAccuracy = true,
 }: RideMapProps) {
   const [isClient, setIsClient] = useState(false);
+  const [mapReady, setMapReady] = useState(false);
+  const [routePoints, setRoutePoints] = useState<[number, number][]>([]);
+  const [loadingRoute, setLoadingRoute] = useState(false);
 
   useEffect(() => {
     setIsClient(true);
   }, []);
 
-  // ✅ SAFE GUARD (CRASH FIX)
-  if (
-    !isClient ||
-    !departureLocation ||
-    !arrivalLocation ||
-    departureLocation.lat == null ||
-    arrivalLocation.lat == null
-  ) {
-    return (
-      <div className="w-full h-96 rounded-lg border bg-gray-100 animate-pulse" />
-    );
+  // Fetch route – only after map is ready
+  useEffect(() => {
+    if (!departureLocation || !arrivalLocation || !mapReady) return;
+
+    const fetchRoute = async () => {
+      setLoadingRoute(true);
+      try {
+        const url = `https://router.project-osrm.org/route/v1/driving/${departureLocation.lng},${departureLocation.lat};${arrivalLocation.lng},${arrivalLocation.lat}?overview=full&geometries=geojson`;
+        const res = await fetch(url);
+        const data = await res.json();
+
+        if (data.routes && data.routes.length > 0) {
+          const coords = data.routes[0].geometry.coordinates.map(
+            ([lng, lat]: [number, number]) => [lat, lng] as [number, number]
+          );
+          setRoutePoints(coords);
+        } else {
+          setRoutePoints([
+            [departureLocation.lat, departureLocation.lng],
+            [arrivalLocation.lat, arrivalLocation.lng],
+          ]);
+        }
+      } catch (error) {
+        console.error('Route fetch error:', error);
+        setRoutePoints([
+          [departureLocation.lat, departureLocation.lng],
+          [arrivalLocation.lat, arrivalLocation.lng],
+        ]);
+      } finally {
+        setLoadingRoute(false);
+      }
+    };
+
+    fetchRoute();
+  }, [departureLocation, arrivalLocation, mapReady]);
+
+  // Safety guard
+  if (!isClient || !departureLocation || !arrivalLocation) {
+    return <div className="w-full h-96 rounded-lg border bg-gray-100 animate-pulse" />;
   }
-
-  const centerLat = (departureLocation.lat + arrivalLocation.lat) / 2;
-  const centerLng = (departureLocation.lng + arrivalLocation.lng) / 2;
-
-  const routePoints: [number, number][] = [
-    [departureLocation.lat, departureLocation.lng],
-    [arrivalLocation.lat, arrivalLocation.lng],
-  ];
 
   const allDrivers = driverLocation
     ? [driverLocation, ...multipleDrivers]
@@ -129,9 +166,15 @@ export default function RideMap({
   return (
     <div className="w-full h-96 rounded-lg overflow-hidden border relative">
       <MapContainer
-        center={[centerLat, centerLng]}
+        key="ride-map"
+        center={[departureLocation.lat, departureLocation.lng]}
         zoom={12}
         style={{ height: '100%', width: '100%' }}
+        zoomControl={true}
+        whenReady={() => {
+          console.log('✅ Map is ready');
+          setMapReady(true);
+        }}
       >
         <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
 
@@ -143,44 +186,37 @@ export default function RideMap({
           />
         )}
 
-        {/* Route */}
-        <Polyline positions={routePoints} color="blue" weight={3} opacity={0.7} />
+        {routePoints.length > 0 && (
+          <Polyline
+            positions={routePoints}
+            color="#2563eb"
+            weight={4}
+            opacity={0.8}
+            smoothFactor={1}
+          />
+        )}
 
-        {/* Start */}
         <Marker position={[departureLocation.lat, departureLocation.lng]} icon={startIcon}>
-          <Popup>
-            <b>Departure</b>
-            <br />
-            {departureLocation.address}
-          </Popup>
+          <Popup>Departure<br />{departureLocation.address}</Popup>
         </Marker>
 
-        {/* End */}
         <Marker position={[arrivalLocation.lat, arrivalLocation.lng]} icon={endIcon}>
-          <Popup>
-            <b>Arrival</b>
-            <br />
-            {arrivalLocation.address}
-          </Popup>
+          <Popup>Arrival<br />{arrivalLocation.address}</Popup>
         </Marker>
 
-        {/* Drivers */}
         {uniqueDrivers.map((driver) => (
-          <Marker
-            key={driver.driverId}
-            position={[driver.lat, driver.lng]}
-            icon={driverIcon}
-          >
-            <Popup>
-              <b>Driver</b> {driver.driverId.slice(0, 8)}
-              <br />
-              {driver.speed ? `Speed: ${driver.speed.toFixed(1)} km/h` : ''}
-            </Popup>
+          <Marker key={driver.driverId} position={[driver.lat, driver.lng]} icon={driverIcon}>
+            <Popup>Driver {driver.driverId.slice(0, 8)}</Popup>
           </Marker>
         ))}
       </MapContainer>
 
-      {/* Info Panel */}
+      {loadingRoute && (
+        <div className="absolute top-4 left-4 bg-white p-2 rounded shadow text-xs">
+          Loading route...
+        </div>
+      )}
+
       {showAccuracy && driverLocation && (
         <div className="absolute bottom-4 left-4 bg-white p-3 rounded shadow text-xs">
           <p>Accuracy: {driverLocation.accuracy ?? 'N/A'} m</p>
@@ -188,7 +224,6 @@ export default function RideMap({
         </div>
       )}
 
-      {/* Driver count */}
       {uniqueDrivers.length > 1 && (
         <div className="absolute top-4 right-4 bg-blue-600 text-white w-8 h-8 flex items-center justify-center rounded-full">
           {uniqueDrivers.length}
