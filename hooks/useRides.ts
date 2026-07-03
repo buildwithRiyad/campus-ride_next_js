@@ -1,8 +1,7 @@
-'use client';
-
-import { useState, useEffect } from 'react';
+// hooks/useRides.ts
+import { useState, useEffect, useCallback } from 'react';
 import { Ride } from '@/lib/types';
-import { ridesAPI } from '@/lib/api';
+import { ridesAPI, bookingsAPI } from '@/lib/api';
 import { toast } from 'sonner';
 
 export const useRides = () => {
@@ -10,27 +9,25 @@ export const useRides = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const fetchRides = async () => {
-      try {
-        setIsLoading(true);
-
-        const data = await ridesAPI.getAll(); // ✅ FIXED
-
-        setRides(data);
-        setError(null);
-      } catch (err: any) {
-        setError(err.message || 'Failed to fetch rides');
-        toast.error('Failed to fetch rides');
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    fetchRides();
+  const fetchRides = useCallback(async () => {
+    try {
+      setIsLoading(true);
+      const data = await ridesAPI.getAll();
+      setRides(data);
+      setError(null);
+    } catch (err: any) {
+      setError(err.message || 'Failed to fetch rides');
+      toast.error('Failed to fetch rides');
+    } finally {
+      setIsLoading(false);
+    }
   }, []);
 
-  return { rides, isLoading, error, setRides };
+  useEffect(() => {
+    fetchRides();
+  }, [fetchRides]);
+
+  return { rides, isLoading, error, setRides, refresh: fetchRides };
 };
 
 export const useRide = (rideId: string) => {
@@ -38,27 +35,26 @@ export const useRide = (rideId: string) => {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const fetchRide = async () => {
-      try {
-        setIsLoading(true);
-
-        const data = await ridesAPI.getById(rideId);
-
-        setRide(data);
-        setError(null);
-      } catch (err: any) {
-        setError(err.message || 'Failed to fetch ride');
-        toast.error('Failed to fetch ride details');
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    if (rideId) fetchRide(); // safety check
+  const fetchRide = useCallback(async () => {
+    if (!rideId) return;
+    try {
+      setIsLoading(true);
+      const data = await ridesAPI.getById(rideId);
+      setRide(data);
+      setError(null);
+    } catch (err: any) {
+      setError(err.message || 'Failed to fetch ride');
+      toast.error('Failed to fetch ride details');
+    } finally {
+      setIsLoading(false);
+    }
   }, [rideId]);
 
-  return { ride, isLoading, error, setRide };
+  useEffect(() => {
+    fetchRide();
+  }, [fetchRide]);
+
+  return { ride, isLoading, error, setRide, refresh: fetchRide };
 };
 
 export const useMyBookings = () => {
@@ -66,25 +62,23 @@ export const useMyBookings = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const fetchBookings = async () => {
-      try {
-        setIsLoading(true);
-
-        const data = await ridesAPI.getAll(); // ⚠️ temporary fix (API mismatch)
-
-        setBookings(data);
-        setError(null);
-      } catch (err: any) {
-        setError(err.message || 'Failed to fetch bookings');
-        toast.error('Failed to fetch bookings');
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    fetchBookings();
+  const fetchBookings = useCallback(async () => {
+    try {
+      setIsLoading(true);
+      const data = await bookingsAPI.getMyBookings();
+      setBookings(data);
+      setError(null);
+    } catch (err: any) {
+      setError(err.message || 'Failed to fetch bookings');
+      toast.error('Failed to fetch bookings');
+    } finally {
+      setIsLoading(false);
+    }
   }, []);
 
-  return { bookings, isLoading, error, setBookings };
+  useEffect(() => {
+    fetchBookings();
+  }, [fetchBookings]);
+
+  return { bookings, isLoading, error, setBookings, refresh: fetchBookings };
 };

@@ -9,7 +9,7 @@ import { Card, CardContent } from '@/components/ui/card';
 export default function RideDetailPage() {
   const params = useParams();
   const rideId = params.id as string;
-  const { ride, isLoading, error } = useRide(rideId);
+  const { ride, isLoading, error, refresh } = useRide(rideId);
 
   if (isLoading) {
     return (
@@ -33,7 +33,8 @@ export default function RideDetailPage() {
 
   return (
     <div className="max-w-4xl mx-auto">
-      <RideDetail ride={ride} />
+      {/* onRefresh prop pass করুন */}
+      <RideDetail ride={ride} onRefresh={refresh} />
     </div>
   );
 }

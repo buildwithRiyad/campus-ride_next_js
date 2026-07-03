@@ -69,6 +69,11 @@ export const ridesAPI = {
     const response = await apiClient.post('/rides', data);
     return response.data;
   },
+  // ✅ NEW – Get rides created by the current user
+  getMyRides: async () => {
+    const response = await apiClient.get('/rides/my');
+    return response.data;
+  },
 };
 
 // ==================== BOOKINGS ====================
@@ -94,6 +99,18 @@ export const bookingsAPI = {
   // Reject a booking (driver only)
   rejectBooking: async (bookingId: string) => {
     const response = await apiClient.patch(`/bookings/${bookingId}/reject`);
+    return response.data;
+  },
+
+  // Confirm booking (passenger confirms after acceptance)
+  confirmBooking: async (bookingId: string) => {
+    const response = await apiClient.patch(`/bookings/${bookingId}/confirm`);
+    return response.data;
+  },
+
+  // ✅ NEW – Get pending bookings for a specific ride (driver only)
+  getBookingsForRide: async (rideId: string) => {
+    const response = await apiClient.get(`/bookings/ride/${rideId}`);
     return response.data;
   },
 };

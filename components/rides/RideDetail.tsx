@@ -1,10 +1,20 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { Ride, DriverLocation } from '@/lib/types';
 import { useAuthStore } from '@/lib/store';
 import { bookingsAPI } from '@/lib/api';
-import * as socket from '@/lib/socket';
+import {
+  connectSocket,
+  joinRideRoom,
+  startGPSTracking,
+  stopGPSTracking,
+  subscribeToDriverLocation,
+  unsubscribeFromDriverLocation,
+  getSocket,
+  closeSocket,
+} from '@/lib/socket';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -12,15 +22,16 @@ import { Badge } from '@/components/ui/badge';
 import { MapPin, Clock, Users, Phone, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import dynamic from 'next/dynamic';
+import { ChatButton } from '@/components/chat/ChatButton'; // ✅ named import
 
 const RideMap = dynamic(() => import('./RideMap'), { ssr: false });
 
 interface RideDetailProps {
   ride: Ride;
   onBook?: () => void;
+  onRefresh?: () => void;
 }
 
-// Geocoding function (optional, for fallback)
 async function geocodeAddress(address: string): Promise<{ lat: number; lng: number } | null> {
   if (!address) return null;
   try {
@@ -41,8 +52,10 @@ async function geocodeAddress(address: string): Promise<{ lat: number; lng: numb
   }
 }
 
-export default function RideDetail({ ride, onBook }: RideDetailProps) {
-  // Guard – ride না থাকলে লোডিং দেখান
+export default function RideDetail({ ride, onBook, onRefresh }: RideDetailProps) {
+  const router = useRouter();
+  const { user } = useAuthStore();
+
   if (!ride) {
     return (
       <div className="p-6 text-center">
@@ -52,34 +65,58 @@ export default function RideDetail({ ride, onBook }: RideDetailProps) {
     );
   }
 
-  const { user } = useAuthStore();
   const [allLocations, setAllLocations] = useState<DriverLocation[]>([]);
   const [isBooking, setIsBooking] = useState(false);
   const [isAccepting, setIsAccepting] = useState(false);
+  const [isRejecting, setIsRejecting] = useState(false);
+  const [localPending, setLocalPending] = useState(false);
+
+  // Extract passengers from bookings
+  const bookings = (ride as any).bookings || [];
+  const passengers = bookings.map((booking: any) => ({
+    userId: booking.userId,
+    user: booking.user,
+    status: booking.status,
+    bookingId: booking.id,
+  }));
 
   const isDriver = user?.id === ride.creatorId;
-  const isPassenger = (ride as any).passengers?.some((p: any) => p.userId === user?.id);
+  const isPassenger = passengers.some((p: any) => p.userId === user?.id);
   const isPartOfRide = isDriver || isPassenger;
-  const hasPendingRequest = (ride as any).passengers?.some(
-    (p: any) => p.userId === user?.id && p.status === 'pending'
+  const hasPendingRequest = passengers.some(
+    (p: any) => p.userId === user?.id && p.status === 'PENDING'
   );
 
-  // State for geocoded coordinates (fallback)
+  // If pending data comes via refresh, reset local pending
+  useEffect(() => {
+    if (hasPendingRequest) {
+      setLocalPending(false);
+    }
+  }, [hasPendingRequest]);
+
+  // Debug logs
+  useEffect(() => {
+    console.log('🔍 RideDetail Debug:', {
+      isDriver,
+      passengersCount: passengers.length,
+      passengers: passengers.map((p: any) => ({
+        userId: p.userId,
+        status: p.status,
+        bookingId: p.bookingId,
+        name: p.user?.name,
+      })),
+      user: user?.id,
+      creatorId: ride.creatorId,
+      localPending,
+    });
+  }, [isDriver, passengers, user, ride.creatorId, localPending]);
+
+  // ============ GEOCODING ============
   const [departureCoords, setDepartureCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [arrivalCoords, setArrivalCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [geocoding, setGeocoding] = useState(false);
   const [geocodeError, setGeocodeError] = useState(false);
 
-  // Debug logs
-  useEffect(() => {
-    console.log('RIDE =>', ride);
-  }, [ride]);
-
-  useEffect(() => {
-    console.log('ALL LOCATIONS =>', allLocations);
-  }, [allLocations]);
-
-  // Geocode addresses if coordinates are missing
   useEffect(() => {
     const hasFromCoords = (ride as any).fromLat && (ride as any).fromLng;
     const hasToCoords = (ride as any).toLat && (ride as any).toLng;
@@ -114,26 +151,30 @@ export default function RideDetail({ ride, onBook }: RideDetailProps) {
     geocode();
   }, [ride.fromLocation, ride.toLocation, ride]);
 
-  // Socket – সবাই লোকেশন পাঠায় ও পায়
+  // ============ SOCKET ============
   useEffect(() => {
     if (!user) return;
 
-    const token = localStorage.getItem('authToken');
-    if (!token) return;
-
-    const s = socket.initSocket(String(user.id), token);
+    const s = connectSocket(Number(user.id));
 
     const onConnect = () => {
       console.log('✅ CONNECTED');
-      socket.joinRideRoom(ride.id);
+      joinRideRoom(ride.id);
       if (isPartOfRide) {
-        socket.startGPSTracking(ride.id);
+        startGPSTracking(ride.id);
       }
     };
 
     s.on('connect', onConnect);
 
-    socket.subscribeToDriverLocation((location: any) => {
+    const onBookingCreated = (data: any) => {
+      console.log('📨 New booking received:', data);
+      toast.info('New booking request!');
+      onRefresh?.();
+    };
+    s.on('booking:created', onBookingCreated);
+
+    subscribeToDriverLocation((location: any) => {
       console.log('📍 LOCATION RECEIVED from', location.driverId || 'unknown', location);
       const driverId = location.driverId || location.userId || 'unknown';
       setAllLocations((prev) => {
@@ -151,57 +192,69 @@ export default function RideDetail({ ride, onBook }: RideDetailProps) {
 
     return () => {
       s.off('connect', onConnect);
-      socket.unsubscribeFromDriverLocation();
+      s.off('booking:created', onBookingCreated);
+      unsubscribeFromDriverLocation();
       if (isPartOfRide) {
-        socket.stopGPSTracking();
+        stopGPSTracking();
       }
-      socket.closeSocket();
+      closeSocket();
     };
-  }, [user, ride.id, isPartOfRide]);
+  }, [user, ride.id, isPartOfRide, onRefresh]);
 
-  // ============================================================
-  // 🔧 UPDATED: Book ride using API + optional socket event
-  // ============================================================
+  // ============ HANDLERS ============
   const handleBookRide = async () => {
     try {
       setIsBooking(true);
-
-      // 1. API call to create booking in database
       await bookingsAPI.createBooking(ride.id);
       toast.success('Booking request sent!');
-
-      // 2. (Optional) Emit socket event for real-time notification
-      const s = socket.getSocket();
+      onRefresh?.();
+      onBook?.();
+      const s = getSocket();
       if (s) {
         s.emit('ride:book-request', {
           rideId: ride.id,
           userId: user?.id,
         });
       }
-
-      onBook?.();
     } catch (error: any) {
       const message = error?.response?.data?.message || 'Failed to book ride';
-      toast.error(message);
+      if (message === 'You have already joined this ride') {
+        toast.info('You already have a pending request for this ride.');
+        setLocalPending(true);
+        onRefresh?.();
+      } else {
+        toast.error(message);
+      }
     } finally {
       setIsBooking(false);
     }
   };
 
-  // ============================================================
-  // 🔧 UPDATED: Accept passenger using booking ID
-  // ============================================================
   const handleAcceptPassenger = async (bookingId: string) => {
     try {
       setIsAccepting(true);
-      // API call with booking ID (not passengerId)
       await bookingsAPI.acceptBooking(bookingId);
       toast.success('Booking accepted!');
+      onRefresh?.();
     } catch (error: any) {
       const message = error?.response?.data?.message || 'Failed to accept booking';
       toast.error(message);
     } finally {
       setIsAccepting(false);
+    }
+  };
+
+  const handleRejectPassenger = async (bookingId: string) => {
+    try {
+      setIsRejecting(true);
+      await bookingsAPI.rejectBooking(bookingId);
+      toast.success('Booking rejected');
+      onRefresh?.();
+    } catch (error: any) {
+      const message = error?.response?.data?.message || 'Failed to reject booking';
+      toast.error(message);
+    } finally {
+      setIsRejecting(false);
     }
   };
 
@@ -216,7 +269,7 @@ export default function RideDetail({ ride, onBook }: RideDetailProps) {
 
   return (
     <div className="space-y-6">
-      {/* Map or location details */}
+      {/* Map */}
       <Card>
         <CardContent className="pt-6">
           {geocoding ? (
@@ -226,6 +279,7 @@ export default function RideDetail({ ride, onBook }: RideDetailProps) {
             </div>
           ) : hasCoords ? (
             <RideMap
+              key={ride.id + (driverLoc?.timestamp || '')}
               departureLocation={{
                 lat: departureCoords!.lat,
                 lng: departureCoords!.lng,
@@ -334,46 +388,66 @@ export default function RideDetail({ ride, onBook }: RideDetailProps) {
               <p className="text-xs text-muted-foreground">per seat</p>
             </div>
           </div>
+
           <div className="flex gap-2 pt-4 border-t">
             <Phone className="w-4 h-4 text-muted-foreground" />
             <p className="text-sm text-muted-foreground">{ride.creator.phone}</p>
           </div>
+
+          {/* ✅ Chat Button – added here */}
+          <div className="pt-4 border-t">
+            <ChatButton
+              otherUserId={ride.creatorId}
+              otherUserName={ride.creator.name}
+              rideId={ride.id}
+            />
+          </div>
         </CardContent>
       </Card>
 
-      {/* Passengers / Booking Requests (driver only) */}
-      {(ride as any).passengers?.length > 0 && isDriver && (
+      {/* ============ BOOKING REQUESTS (Driver only) ============ */}
+      {passengers.length > 0 && isDriver && (
         <Card>
           <CardHeader>
             <CardTitle>Booking Requests & Passengers</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="space-y-3">
-              {(ride as any).passengers.map((passenger: any) => (
+              {passengers.map((passenger: any) => (
                 <div
                   key={passenger.userId}
-                  className="flex justify-between p-3 border rounded-lg"
+                  className="flex justify-between items-center p-3 border rounded-lg"
                 >
-                  <div className="flex gap-3">
+                  <div className="flex gap-3 items-center">
                     <Avatar className="size-10">
-                      <AvatarImage src={passenger.user.avatar} />
-                      <AvatarFallback>{passenger.user.name.charAt(0)}</AvatarFallback>
+                      <AvatarImage src={passenger.user?.avatar} />
+                      <AvatarFallback>{passenger.user?.name?.charAt(0) || 'U'}</AvatarFallback>
                     </Avatar>
                     <div>
-                      <p className="font-semibold text-sm">{passenger.user.name}</p>
+                      <p className="font-semibold text-sm">{passenger.user?.name || 'Unknown'}</p>
                       <Badge variant="outline" className="text-xs mt-1">
                         {passenger.status}
                       </Badge>
                     </div>
                   </div>
-                  {passenger.status === 'pending' && (
-                    <Button
-                      size="sm"
-                      onClick={() => handleAcceptPassenger(passenger.bookingId)} // ✅ now using bookingId
-                      disabled={isAccepting}
-                    >
-                      Accept
-                    </Button>
+                  {passenger.status === 'PENDING' && (
+                    <div className="flex gap-2">
+                      <Button
+                        size="sm"
+                        onClick={() => handleAcceptPassenger(passenger.bookingId)}
+                        disabled={isAccepting}
+                      >
+                        Accept
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="destructive"
+                        onClick={() => handleRejectPassenger(passenger.bookingId)}
+                        disabled={isRejecting}
+                      >
+                        Reject
+                      </Button>
+                    </div>
                   )}
                 </div>
               ))}
@@ -382,8 +456,17 @@ export default function RideDetail({ ride, onBook }: RideDetailProps) {
         </Card>
       )}
 
-      {/* Action Button */}
-      {!isDriver && !isPassenger && !hasPendingRequest && (
+      {/* ============ PENDING REQUEST MESSAGE ============ */}
+      {(hasPendingRequest || localPending) && (
+        <div className="w-full p-4 text-center border rounded-lg bg-muted/50">
+          <p className="text-sm text-muted-foreground">
+            You already have a pending request for this ride. Please wait for the driver to accept or reject it.
+          </p>
+        </div>
+      )}
+
+      {/* ============ ACTION BUTTON ============ */}
+      {!isDriver && !isPassenger && !hasPendingRequest && !localPending && (
         <Button
           className="w-full"
           size="lg"

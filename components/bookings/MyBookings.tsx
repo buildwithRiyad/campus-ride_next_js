@@ -9,8 +9,10 @@ import { MapPin, Clock, User } from 'lucide-react';
 import { toast } from 'sonner';
 import Link from 'next/link';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Button } from '@/components/ui/button'; // ✅ added
 
-type BookingStatus = 'pending' | 'accepted' | 'rejected';
+// ✅ extended status to include 'confirmed'
+type BookingStatus = 'pending' | 'accepted' | 'rejected' | 'confirmed';
 
 // ✅ Type based on actual backend response
 interface Booking {
@@ -55,6 +57,21 @@ export default function MyBookings() {
 
     fetchBookings();
   }, []);
+
+  // ✅ handler for confirming a booking
+  const handleConfirm = async (bookingId: string) => {
+    try {
+      await bookingsAPI.confirmBooking(bookingId);
+      toast.success('Booking confirmed!');
+      setBookings((prev) =>
+        prev.map((b) =>
+          b.id === bookingId ? { ...b, status: 'confirmed' } : b
+        )
+      );
+    } catch (err) {
+      toast.error('Failed to confirm booking');
+    }
+  };
 
   // Loading skeletons
   if (isLoading) {
@@ -116,6 +133,12 @@ export default function MyBookings() {
         // Rating fallback
         const rating = ride.creator.rating ?? 0;
 
+        // ✅ determine badge variant including 'confirmed'
+        let badgeVariant: 'default' | 'destructive' | 'secondary' | 'outline' = 'secondary';
+        if (booking.status === 'accepted') badgeVariant = 'default';
+        else if (booking.status === 'rejected') badgeVariant = 'destructive';
+        else if (booking.status === 'confirmed') badgeVariant = 'outline';
+
         return (
           <Link key={booking.id} href={`/rides/${ride.id}`}>
             <Card className="hover:shadow-lg transition-shadow cursor-pointer">
@@ -138,15 +161,7 @@ export default function MyBookings() {
                       </div>
                     </div>
 
-                    <Badge
-                      variant={
-                        booking.status === 'accepted'
-                          ? 'default'
-                          : booking.status === 'rejected'
-                          ? 'destructive'
-                          : 'secondary'
-                      }
-                    >
+                    <Badge variant={badgeVariant}>
                       {booking.status}
                     </Badge>
                   </div>
@@ -167,7 +182,7 @@ export default function MyBookings() {
                     </div>
                   </div>
 
-                  {/* Time + Price */}
+                  {/* Time + Price + Confirm Button */}
                   <div className="flex items-center justify-between pt-2 border-t text-sm">
                     <div className="flex items-center gap-2">
                       <Clock className="w-4 h-4 text-muted-foreground" />
@@ -176,9 +191,25 @@ export default function MyBookings() {
                       </span>
                     </div>
 
-                    <span className="font-semibold text-primary">
-                      ${ride.pricePerSeat ?? 0}
-                    </span>
+                    <div className="flex items-center gap-3">
+                      <span className="font-semibold text-primary">
+                        ${ride.pricePerSeat ?? 0}
+                      </span>
+
+                      {/* ✅ Confirm button – only for 'accepted' bookings */}
+                      {booking.status === 'accepted' && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={(e) => {
+                            e.preventDefault(); // prevent navigation to ride detail
+                            handleConfirm(booking.id);
+                          }}
+                        >
+                          Confirm Ride
+                        </Button>
+                      )}
+                    </div>
                   </div>
                 </div>
               </CardContent>

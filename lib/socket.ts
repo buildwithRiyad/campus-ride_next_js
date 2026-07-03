@@ -1,25 +1,30 @@
-import io, { Socket } from 'socket.io-client';
+// lib/socket.ts
+import { io, Socket } from 'socket.io-client';
 import { DriverLocation } from './types';
 
 const SOCKET_URL =
   process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:3001';
 
+// ---- Ride Socket ----
 let socket: Socket | null = null;
 let geoWatchId: number | null = null;
 
+// ---- Chat Socket ----
+let chatSocket: Socket | null = null;
+
 /* =========================
-   SOCKET INIT
+   RIDE SOCKET – INIT, CLOSE, JOIN, LOCATION
 ========================= */
-export const initSocket = (userId: string, token: string): Socket => {
+export const connectSocket = (userId: number): Socket => {
   if (socket?.connected) return socket;
 
   socket = io(`${SOCKET_URL}/ride`, {
-    auth: { token, userId },
+    query: { userId: String(userId) },
     transports: ['websocket'],
   });
 
   socket.on('connect', () => {
-    console.log('[socket] connected:', socket.id);
+    console.log('[socket] connected:', socket?.id);
   });
 
   socket.on('disconnect', () => {
@@ -38,16 +43,10 @@ export const closeSocket = () => {
   socket = null;
 };
 
-/* =========================
-   JOIN ROOM  (✅ ADDED / RE‑EXPORTED)
-========================= */
 export const joinRideRoom = (rideId: string) => {
   socket?.emit('join-ride', { rideId });
 };
 
-/* =========================
-   EMIT DRIVER LOCATION
-========================= */
 export const sendDriverLocation = (
   rideId: string,
   lat: number,
@@ -65,9 +64,6 @@ export const sendDriverLocation = (
   });
 };
 
-/* =========================
-   SUBSCRIBE TO LOCATION UPDATES
-========================= */
 export const subscribeToDriverLocation = (cb: (data: any) => void) => {
   socket?.on('ride:location', cb);
 };
@@ -103,7 +99,10 @@ export const startGPSTracking = (
     minDistance?: number;
   }
 ) => {
-  if (!socket) return console.error('Socket not initialized');
+  if (!socket) {
+    console.error('Socket not initialized');
+    return;
+  }
   if (geoWatchId !== null) return;
 
   if (options) {
@@ -165,9 +164,6 @@ export const stopGPSTracking = () => {
   }
 };
 
-/* =========================
-   DISTANCE HELPER
-========================= */
 function calculateDistance(
   lat1: number,
   lng1: number,
@@ -213,3 +209,50 @@ export async function searchLocation(
     lng: Number(item.lon),
   }));
 }
+
+/* =========================
+   CHAT SOCKET
+========================= */
+export const connectChatSocket = (userId: number): Socket => {
+  if (chatSocket?.connected) return chatSocket;
+  chatSocket = io(`${SOCKET_URL}/chat`, {
+    query: { userId: String(userId) },
+    transports: ['websocket'],
+  });
+  return chatSocket;
+};
+
+export const getChatSocket = (): Socket | null => chatSocket;
+
+export const closeChatSocket = () => {
+  chatSocket?.disconnect();
+  chatSocket = null;
+};
+
+export const sendChatMessage = (
+  receiverId: number,
+  content: string,
+  rideId?: string,
+) => {
+  chatSocket?.emit('chat:send', { receiverId, content, rideId });
+};
+
+export const getChatHistory = (otherUserId: number, rideId?: string) => {
+  chatSocket?.emit('chat:history', { otherUserId, rideId });
+};
+
+export const subscribeToChatMessages = (cb: (message: any) => void) => {
+  chatSocket?.on('chat:message', cb);
+};
+
+export const unsubscribeFromChatMessages = () => {
+  chatSocket?.off('chat:message');
+};
+
+export const subscribeToChatHistory = (cb: (messages: any[]) => void) => {
+  chatSocket?.on('chat:history', cb);
+};
+
+export const unsubscribeFromChatHistory = () => {
+  chatSocket?.off('chat:history');
+};
