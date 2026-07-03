@@ -8,7 +8,7 @@ import { chatAPI } from '@/lib/api';
 
 export function useChatNotifications() {
   const { user } = useAuthStore();
-  const { incrementUnread, setUnread } = useChatStore();
+  const { incrementUnread, setUnread, setLastChatTarget } = useChatStore();
 
   useEffect(() => {
     if (!user) return;
@@ -22,6 +22,11 @@ export function useChatNotifications() {
       // Only increment if message is not from me
       if (msg.senderId !== user.id) {
         incrementUnread();
+        setLastChatTarget({
+          otherUserId: msg.sender?.id ?? msg.senderId,
+          otherUserName: msg.sender?.name,
+          otherUserAvatar: msg.sender?.avatar,
+        });
       }
     };
 
@@ -30,5 +35,5 @@ export function useChatNotifications() {
     return () => {
       unsubscribeFromChatMessages();
     };
-  }, [user, incrementUnread, setUnread]);
+  }, [user, incrementUnread, setUnread, setLastChatTarget]);
 }

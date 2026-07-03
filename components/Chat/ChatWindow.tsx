@@ -20,7 +20,7 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Image, Send, Loader2 } from 'lucide-react';
+import { Image, Send, Loader2, MessageSquare, ChevronDown } from 'lucide-react';
 import { toast } from 'sonner';
 
 interface Message {
@@ -33,10 +33,10 @@ interface Message {
 }
 
 interface ChatWindowProps {
-  otherUserId?: number;       // for direct chat
+  otherUserId?: number;
   otherUserName?: string;
   otherUserAvatar?: string;
-  rideId?: string;            // for ride chat
+  rideId?: string;
 }
 
 export function ChatWindow({
@@ -53,28 +53,87 @@ export function ChatWindow({
   const [uploading, setUploading] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(true);
   const [joinError, setJoinError] = useState<string | null>(null);
+  const [showScrollButton, setShowScrollButton] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const isAtBottomRef = useRef(true);
 
-  // Determine mode
   const isRide = !!rideId;
   const isDirect = !!otherUserId && !rideId;
 
+  // ─── Friendly fallback ───
   if (!isRide && !isDirect) {
     return (
       <Card className="h-[600px] flex flex-col items-center justify-center">
         <CardContent className="text-center text-muted-foreground">
-          <p>Invalid chat mode. Please provide either a rideId or otherUserId.</p>
+          <MessageSquare className="h-12 w-12 mx-auto mb-4 text-muted-foreground/50" />
+          <p className="text-lg font-medium">No conversation selected</p>
+          <p className="text-sm">Open a chat from a ride or user profile</p>
         </CardContent>
       </Card>
     );
   }
 
+  const isComposerDisabled = uploading || loadingHistory || isJoining || !isConnected || !!joinError;
+  const statusText = loadingHistory
+    ? 'Loading messages...'
+    : joinError
+      ? joinError
+      : isJoining
+        ? 'Joining chat...'
+        : !isConnected
+          ? 'Not connected'
+          : '';
+
+  // ─── Scroll helpers ───
+  const checkIfAtBottom = () => {
+    const container = scrollContainerRef.current;
+    if (!container) return true;
+    const { scrollTop, scrollHeight, clientHeight } = container;
+    const atBottom = scrollTop + clientHeight >= scrollHeight - 10;
+    isAtBottomRef.current = atBottom;
+    setShowScrollButton(!atBottom);
+    return atBottom;
+  };
+
+  const scrollToBottom = (smooth = true) => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    container.scrollTo({
+      top: container.scrollHeight,
+      behavior: smooth ? 'smooth' : 'auto',
+    });
+    isAtBottomRef.current = true;
+    setShowScrollButton(false);
+  };
+
+  // ─── Listen to scroll events ───
+  useEffect(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    const onScroll = () => checkIfAtBottom();
+    container.addEventListener('scroll', onScroll);
+    return () => container.removeEventListener('scroll', onScroll);
+  }, []);
+
+  // ─── Auto‑scroll on new messages ───
+  useEffect(() => {
+    if (isAtBottomRef.current) {
+      scrollToBottom(false);
+    }
+  }, [messages]);
+
   // ─── Socket lifecycle ───
   useEffect(() => {
-    if (!user) return;
+    if (!user) {
+      setLoadingHistory(false);
+      setIsConnected(false);
+      setIsJoining(false);
+      setJoinError('Please log in to use chat');
+      return;
+    }
 
-    let socket = connectChatSocket(user.id);
+    const socket = connectChatSocket(user.id);
     if (!socket) {
       setJoinError('Missing authentication token');
       setIsConnected(false);
@@ -114,7 +173,6 @@ export function ChatWindow({
 
     const onMessage = (msg: Message) => {
       setMessages((prev) => [...prev, msg]);
-      // If direct message and not from me, mark as read in backend
       if (isDirect && msg.senderId !== user.id) {
         chatAPI.markAsRead(msg.id).catch(() => {});
       }
@@ -144,7 +202,6 @@ export function ChatWindow({
       onConnect();
     }
 
-    // Fetch history via REST
     const fetchHistory = async () => {
       try {
         setLoadingHistory(true);
@@ -177,13 +234,6 @@ export function ChatWindow({
       unsubscribeFromChatMessages();
     };
   }, [user, rideId, otherUserId, isRide, isDirect]);
-
-  // Auto‑scroll
-  useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
-  }, [messages]);
 
   // ─── Send message ───
   const sendMessage = async (imageUrl?: string) => {
@@ -232,52 +282,6 @@ export function ChatWindow({
     }
   };
 
-  // ─── UI States ───
-  if (loadingHistory) {
-    return (
-      <Card className="h-[600px] flex flex-col items-center justify-center">
-        <CardContent className="text-muted-foreground flex items-center gap-2">
-          <Loader2 className="h-5 w-5 animate-spin" />
-          Loading messages...
-        </CardContent>
-      </Card>
-    );
-  }
-
-  if (joinError) {
-    return (
-      <Card className="h-[600px] flex flex-col items-center justify-center">
-        <CardContent className="text-center">
-          <p className="text-destructive">{joinError}</p>
-          <Button variant="outline" size="sm" className="mt-4" onClick={retryJoin}>
-            Retry
-          </Button>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  if (!isConnected && isJoining) {
-    return (
-      <Card className="h-[600px] flex flex-col items-center justify-center">
-        <CardContent className="text-muted-foreground flex items-center gap-2">
-          <Loader2 className="h-5 w-5 animate-spin" />
-          Joining chat...
-        </CardContent>
-      </Card>
-    );
-  }
-
-  if (!isConnected) {
-    return (
-      <Card className="h-[600px] flex flex-col items-center justify-center">
-        <CardContent className="text-center">
-          <p className="text-muted-foreground">Not connected. <Button variant="link" onClick={retryJoin}>Retry</Button></p>
-        </CardContent>
-      </Card>
-    );
-  }
-
   // ─── Group messages ───
   const groupedMessages: { date: string; messages: Message[] }[] = [];
   let currentDate = '';
@@ -291,90 +295,124 @@ export function ChatWindow({
   });
 
   return (
-    <Card className="h-[600px] flex flex-col">
-      <CardHeader className="py-3 border-b">
-        <CardTitle className="text-lg flex items-center gap-2">
+    <Card className="h-[600px] flex flex-col overflow-hidden bg-white">
+      <CardHeader className="flex-shrink-0 border-b bg-blue-50/80 py-3 backdrop-blur">
+        <CardTitle className="flex items-center gap-2 text-lg text-blue-800">
           <Avatar className="h-8 w-8">
             <AvatarImage src={otherUserAvatar} />
-            <AvatarFallback>{otherUserName?.charAt(0) || 'U'}</AvatarFallback>
+            <AvatarFallback className="bg-blue-200 text-blue-800">{otherUserName?.charAt(0) || 'U'}</AvatarFallback>
           </Avatar>
           {otherUserName || 'User'}
         </CardTitle>
       </CardHeader>
 
-      <CardContent className="flex-1 flex flex-col p-4 pt-4 overflow-hidden">
-        <ScrollArea className="flex-1 pr-4" ref={scrollRef}>
-          <div className="space-y-4">
-            {groupedMessages.length === 0 ? (
-              <p className="text-center text-muted-foreground text-sm py-8">
-                No messages yet. Start the conversation!
-              </p>
-            ) : (
-              groupedMessages.map((group, idx) => (
-                <div key={idx}>
-                  <div className="text-center text-xs text-muted-foreground my-2">
-                    {group.date === new Date().toLocaleDateString() ? 'Today' : group.date}
-                  </div>
-                  {group.messages.map((msg) => {
-                    const isOwn = msg.senderId === user?.id;
-                    return (
+      <CardContent className="relative flex min-h-0 flex-1 flex-col overflow-hidden bg-gradient-to-b from-slate-50 to-blue-50/30 p-4 pt-4">
+        {statusText && (
+          <div className="mb-3 flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600 shadow-sm">
+            {(loadingHistory || isJoining) && <Loader2 className="h-4 w-4 animate-spin text-blue-600" />}
+            <span className={joinError ? 'text-destructive' : ''}>{statusText}</span>
+            {joinError && (
+              <Button variant="link" size="sm" className="ml-auto h-auto p-0 text-blue-600" onClick={retryJoin}>
+                Retry
+              </Button>
+            )}
+          </div>
+        )}
+
+        {/* ─── Scrollable container ─── */}
+        <div
+          ref={scrollContainerRef}
+          className="flex-1 overflow-y-auto pr-4 space-y-4"
+        >
+          {groupedMessages.length === 0 ? (
+            <p className="text-center text-muted-foreground text-sm py-8">
+              No messages yet. Start the conversation!
+            </p>
+          ) : (
+            groupedMessages.map((group, idx) => (
+              <div key={idx} className="space-y-3">
+                <div className="text-center text-xs text-muted-foreground my-2">
+                  {group.date === new Date().toLocaleDateString() ? 'Today' : group.date}
+                </div>
+                {group.messages.map((msg) => {
+                  const isOwn = msg.senderId === user?.id;
+                  const senderName = msg.sender?.name || 'Unknown';
+                  const senderAvatar = msg.sender?.avatar;
+
+                  return (
+                    <div
+                      key={msg.id}
+                      className={`flex ${isOwn ? 'justify-end' : 'justify-start'} mb-2`}
+                    >
                       <div
-                        key={msg.id}
-                        className={`flex ${isOwn ? 'justify-end' : 'justify-start'} mb-2`}
+                        className={`max-w-[70%] flex ${isOwn ? 'flex-row-reverse' : 'flex-row'} items-end gap-2`}
                       >
-                        <div
-                          className={`max-w-[70%] flex ${isOwn ? 'flex-row-reverse' : 'flex-row'} items-end gap-2`}
-                        >
+                        {!isOwn && (
+                          <Avatar className="h-8 w-8">
+                            <AvatarImage src={senderAvatar} />
+                            <AvatarFallback>
+                              {senderName.charAt(0)}
+                            </AvatarFallback>
+                          </Avatar>
+                        )}
+                        <div>
                           {!isOwn && (
-                            <Avatar className="h-8 w-8">
-                              <AvatarImage src={msg.sender?.avatar} />
-                              <AvatarFallback>
-                                {msg.sender?.name?.charAt(0) || 'U'}
-                              </AvatarFallback>
-                            </Avatar>
+                            <p className="text-xs text-muted-foreground mb-1 font-medium">
+                              {senderName}
+                            </p>
                           )}
-                          <div>
-                            <div
-                              className={`rounded-lg px-4 py-2 ${
-                                isOwn
-                                  ? 'bg-primary text-primary-foreground'
-                                  : 'bg-muted'
-                              }`}
-                            >
-                              {msg.type === 'image' && (
-                                <img
-                                  src={msg.content}
-                                  alt="Shared image"
-                                  className="max-w-[200px] rounded-md mb-1"
-                                  loading="lazy"
-                                />
-                              )}
-                              {msg.type === 'text' && (
-                                <p className="text-sm break-words">{msg.content}</p>
-                              )}
-                            </div>
-                            <div
-                              className={`text-xs text-muted-foreground mt-1 ${
-                                isOwn ? 'text-right' : 'text-left'
-                              }`}
-                            >
-                              {new Date(msg.createdAt).toLocaleTimeString([], {
-                                hour: '2-digit',
-                                minute: '2-digit',
-                              })}
-                            </div>
+                          <div
+                            className={`rounded-lg px-4 py-2 ${
+                              isOwn
+                                ? 'bg-primary text-primary-foreground'
+                                : 'bg-muted'
+                            }`}
+                          >
+                            {msg.type === 'image' && (
+                              <img
+                                src={msg.content}
+                                alt="Shared image"
+                                className="max-w-[200px] rounded-md mb-1"
+                                loading="lazy"
+                              />
+                            )}
+                            {msg.type === 'text' && (
+                              <p className="text-sm break-words">{msg.content}</p>
+                            )}
+                          </div>
+                          <div
+                            className={`text-xs text-muted-foreground mt-1 ${
+                              isOwn ? 'text-right' : 'text-left'
+                            }`}
+                          >
+                            {new Date(msg.createdAt).toLocaleTimeString([], {
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            })}
                           </div>
                         </div>
                       </div>
-                    );
-                  })}
-                </div>
-              ))
-            )}
-          </div>
-        </ScrollArea>
+                    </div>
+                  );
+                })}
+              </div>
+            ))
+          )}
+        </div>
 
-        <div className="flex gap-2 mt-4 items-center">
+        {/* ─── Floating scroll‑to‑bottom button ─── */}
+        {showScrollButton && (
+          <button
+            onClick={() => scrollToBottom(true)}
+            className="absolute bottom-20 right-6 z-10 rounded-full bg-primary p-2 text-primary-foreground shadow-lg transition-transform hover:scale-110 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2"
+            aria-label="Scroll to bottom"
+          >
+            <ChevronDown className="h-5 w-5" />
+          </button>
+        )}
+
+        {/* ─── Input bar ─── */}
+        <div className="flex gap-2 mt-4 items-center flex-shrink-0">
           <input
             type="file"
             accept="image/*"
@@ -395,12 +433,13 @@ export function ChatWindow({
             onChange={(e) => setInput(e.target.value)}
             placeholder="Type a message..."
             onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
-            className="flex-1"
-            disabled={uploading}
+            className="flex-1 border-slate-200 bg-slate-50 focus:border-blue-500 focus:ring-blue-500"
+            disabled={isComposerDisabled}
           />
           <Button
             onClick={() => sendMessage()}
-            disabled={!input.trim() && !uploading}
+            disabled={!input.trim() || isComposerDisabled}
+            className="bg-blue-600 text-white hover:bg-blue-700"
           >
             <Send className="h-4 w-4" />
           </Button>

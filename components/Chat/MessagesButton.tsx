@@ -6,10 +6,15 @@ import { MessageSquare } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 
 export function MessagesButton() {
-  const { unreadCount } = useChatStore();
+  const { unreadCount, resetUnread, openChat, lastChatTarget } = useChatStore();
+
+  const handleClick = () => {
+    resetUnread(); // clear badge when opened
+    openChat(lastChatTarget ?? {}); // open the latest direct chat from the notification
+  };
 
   return (
-    <Button variant="ghost" size="icon" className="relative">
+    <Button variant="ghost" size="icon" className="relative" onClick={handleClick}>
       <MessageSquare className="h-5 w-5" />
       {unreadCount > 0 && (
         <Badge

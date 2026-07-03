@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useAuthStore } from '@/lib/store';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { MessagesButton } from '@/components/chat/MessagesButton'; // ✅ fixed import path
+import { MessagesButton } from '@/components/Chat/MessagesButton';
 import { useChatNotifications } from '@/hooks/useChatNotifications';
 import { closeChatSocket } from '@/lib/socket';
 
