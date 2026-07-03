@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link'; // 👈 added for profile navigation
 import { Ride, DriverLocation } from '@/lib/types';
 import { useAuthStore } from '@/lib/store';
 import { bookingsAPI } from '@/lib/api';
@@ -22,7 +23,7 @@ import { Badge } from '@/components/ui/badge';
 import { MapPin, Clock, Users, Phone, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import dynamic from 'next/dynamic';
-import { ChatButton } from '@/components/chat/ChatButton'; // ✅ named import
+import { ChatButton } from '@/components/Chat/ChatButton';
 
 const RideMap = dynamic(() => import('./RideMap'), { ssr: false });
 
@@ -55,6 +56,12 @@ async function geocodeAddress(address: string): Promise<{ lat: number; lng: numb
 export default function RideDetail({ ride, onBook, onRefresh }: RideDetailProps) {
   const router = useRouter();
   const { user } = useAuthStore();
+
+  // 👇 Mount guard for client‑only components (fixes hydration)
+  const [isMounted, setIsMounted] = useState(false);
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
 
   if (!ride) {
     return (
@@ -94,7 +101,7 @@ export default function RideDetail({ ride, onBook, onRefresh }: RideDetailProps)
     }
   }, [hasPendingRequest]);
 
-  // Debug logs
+  // Debug logs (optional)
   useEffect(() => {
     console.log('🔍 RideDetail Debug:', {
       isDriver,
@@ -277,9 +284,8 @@ export default function RideDetail({ ride, onBook, onRefresh }: RideDetailProps)
               <Loader2 className="h-8 w-8 animate-spin text-primary" />
               <p className="mt-4 text-sm text-muted-foreground">Loading map...</p>
             </div>
-          ) : hasCoords ? (
+          ) : isMounted && hasCoords ? (
             <RideMap
-              key={ride.id + (driverLoc?.timestamp || '')}
               departureLocation={{
                 lat: departureCoords!.lat,
                 lng: departureCoords!.lng,
@@ -362,25 +368,28 @@ export default function RideDetail({ ride, onBook, onRefresh }: RideDetailProps)
         </CardContent>
       </Card>
 
-      {/* Driver Info */}
+      {/* Driver Info with clickable profile link */}
       <Card>
         <CardHeader>
           <CardTitle>Driver Information</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex justify-between">
-            <div className="flex gap-3">
+            <Link
+              href={`/profile/${ride.creatorId}`}
+              className="flex gap-3 items-center hover:opacity-80 transition-opacity cursor-pointer"
+            >
               <Avatar className="size-12">
                 <AvatarImage src={ride.creator.profileImage} />
                 <AvatarFallback>{ride.creator.name.charAt(0)}</AvatarFallback>
               </Avatar>
               <div>
-                <p className="font-semibold">{ride.creator.name}</p>
+                <p className="font-semibold hover:underline">{ride.creator.name}</p>
                 <p className="text-sm text-muted-foreground">
                   ⭐ {ride.creator.rating?.toFixed(1)}
                 </p>
               </div>
-            </div>
+            </Link>
             <div className="text-right">
               <p className="text-2xl font-bold text-primary">
                 ${ride.pricePerSeat}
@@ -394,18 +403,24 @@ export default function RideDetail({ ride, onBook, onRefresh }: RideDetailProps)
             <p className="text-sm text-muted-foreground">{ride.creator.phone}</p>
           </div>
 
-          {/* ✅ Chat Button – added here */}
+          {/* Chat Button */}
           <div className="pt-4 border-t">
-            <ChatButton
-              otherUserId={ride.creatorId}
-              otherUserName={ride.creator.name}
-              rideId={ride.id}
-            />
+            {isPartOfRide ? (
+              <ChatButton
+                otherUserId={ride.creatorId}
+                otherUserName={ride.creator.name}
+                rideId={ride.id}
+              />
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                Chat becomes available after you join this ride.
+              </p>
+            )}
           </div>
         </CardContent>
       </Card>
 
-      {/* ============ BOOKING REQUESTS (Driver only) ============ */}
+      {/* Booking Requests (Driver only) */}
       {passengers.length > 0 && isDriver && (
         <Card>
           <CardHeader>
@@ -456,7 +471,7 @@ export default function RideDetail({ ride, onBook, onRefresh }: RideDetailProps)
         </Card>
       )}
 
-      {/* ============ PENDING REQUEST MESSAGE ============ */}
+      {/* Pending request message */}
       {(hasPendingRequest || localPending) && (
         <div className="w-full p-4 text-center border rounded-lg bg-muted/50">
           <p className="text-sm text-muted-foreground">
@@ -465,7 +480,7 @@ export default function RideDetail({ ride, onBook, onRefresh }: RideDetailProps)
         </div>
       )}
 
-      {/* ============ ACTION BUTTON ============ */}
+      {/* Action button */}
       {!isDriver && !isPassenger && !hasPendingRequest && !localPending && (
         <Button
           className="w-full"

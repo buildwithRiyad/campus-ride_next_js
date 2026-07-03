@@ -5,12 +5,19 @@ import { useRouter } from 'next/navigation';
 import { useAuthStore } from '@/lib/store';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { MessagesButton } from '@/components/chat/MessagesButton'; // ✅ fixed import path
+import { useChatNotifications } from '@/hooks/useChatNotifications';
+import { closeChatSocket } from '@/lib/socket';
 
 export default function Navbar() {
   const router = useRouter();
   const { user, isAuthenticated, logout } = useAuthStore();
 
+  // Activate global chat listener (runs once on mount)
+  useChatNotifications();
+
   const handleLogout = () => {
+    closeChatSocket();
     logout();
     router.push('/login');
   };
@@ -35,6 +42,9 @@ export default function Navbar() {
                 My Bookings
               </Link>
               <div className="flex items-center gap-4">
+                {/* 👇 Messages button with unread badge */}
+                <MessagesButton />
+
                 <Link href={`/profile/${user.id}`} className="flex items-center gap-2">
                   <Avatar className="size-8">
                     <AvatarImage src={user.avatar} alt={user.name} />
@@ -55,9 +65,7 @@ export default function Navbar() {
                 </Button>
               </Link>
               <Link href="/register">
-                <Button size="sm">
-                  Sign Up
-                </Button>
+                <Button size="sm">Sign Up</Button>
               </Link>
             </>
           )}

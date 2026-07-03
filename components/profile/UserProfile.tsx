@@ -3,28 +3,29 @@
 import { useEffect, useState } from 'react';
 import { User } from '@/lib/types';
 import { usersAPI } from '@/lib/api';
+import { useAuthStore } from '@/lib/store';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Phone, Mail } from 'lucide-react';
 import { toast } from 'sonner';
 import { Skeleton } from '@/components/ui/skeleton';
+import { ChatButton } from '@/components/Chat/ChatButton';
 
 interface UserProfileProps {
   userId: string;
 }
 
-export default function UserProfile({
-  userId,
-}: UserProfileProps) {
-  const [user, setUser] = useState<User | null>(null);
+export default function UserProfile({ userId }: UserProfileProps) {
+  const { user: currentUser } = useAuthStore();
+  const [profileUser, setProfileUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     const fetchUser = async () => {
       try {
         const data = await usersAPI.getById(userId);
-        setUser(data);
+        setProfileUser(data);
       } catch (error) {
         toast.error('Failed to fetch user profile');
       } finally {
@@ -35,11 +36,16 @@ export default function UserProfile({
     fetchUser();
   }, [userId]);
 
+  // 🔍 Debug logs (remove in production)
+  console.log('👤 Current user:', currentUser);
+  console.log('👤 Profile user ID:', userId, 'type:', typeof userId);
+  console.log('👤 Profile user:', profileUser);
+
   if (isLoading) {
     return <Skeleton className="h-96" />;
   }
 
-  if (!user) {
+  if (!profileUser) {
     return (
       <Card>
         <CardContent className="py-12 text-center text-muted-foreground">
@@ -49,6 +55,13 @@ export default function UserProfile({
     );
   }
 
+  // Safely compare IDs (both as numbers)
+  const currentUserId = currentUser?.id ? Number(currentUser.id) : null;
+  const profileUserId = Number(userId);
+  const isOwnProfile = currentUserId === profileUserId;
+
+  console.log('🔍 isOwnProfile:', isOwnProfile);
+
   return (
     <div className="space-y-6">
       <Card>
@@ -57,11 +70,11 @@ export default function UserProfile({
             <div className="flex-shrink-0">
               <Avatar className="size-24">
                 <AvatarImage
-                  src={user.profileImage}
-                  alt={user.name}
+                  src={profileUser.profileImage}
+                  alt={profileUser.name}
                 />
                 <AvatarFallback className="text-2xl">
-                  {user.name.charAt(0)}
+                  {profileUser.name.charAt(0)}
                 </AvatarFallback>
               </Avatar>
             </div>
@@ -69,22 +82,19 @@ export default function UserProfile({
             <div className="flex-1">
               <div className="mb-4">
                 <h1 className="text-3xl font-bold">
-                  {user.name}
+                  {profileUser.name}
                 </h1>
 
-                <div className="flex items-center gap-2 mt-2">
-                  <Badge
-                    variant="secondary"
-                    className="text-lg"
-                  >
-                    ⭐ {(user.rating ?? 0).toFixed(1)}
+                <div className="flex items-center gap-2 mt-2 flex-wrap">
+                  <Badge variant="secondary" className="text-lg">
+                    ⭐ {(profileUser.rating ?? 0).toFixed(1)}
                   </Badge>
 
                   <Badge variant="outline">
-                    {user.university}
+                    {profileUser.university}
                   </Badge>
 
-                  {user.isVerified && (
+                  {profileUser.isVerified && (
                     <Badge>Verified</Badge>
                   )}
                 </div>
@@ -93,101 +103,100 @@ export default function UserProfile({
               <div className="space-y-2">
                 <div className="flex items-center gap-3">
                   <Mail className="w-5 h-5 text-muted-foreground" />
-                  <span>{user.email}</span>
+                  <span>{profileUser.email}</span>
                 </div>
 
-                {user.phone && (
+                {profileUser.phone && (
                   <div className="flex items-center gap-3">
                     <Phone className="w-5 h-5 text-muted-foreground" />
-                    <span>{user.phone}</span>
+                    <span>{profileUser.phone}</span>
                   </div>
                 )}
 
-                {user.department && (
+                {profileUser.department && (
                   <div>
-                    <span className="font-medium">
-                      Department:
-                    </span>{' '}
-                    {user.department}
+                    <span className="font-medium">Department:</span>{' '}
+                    {profileUser.department}
                   </div>
                 )}
 
                 <div>
-                  <span className="font-medium">
-                    Student ID:
-                  </span>{' '}
-                  {user.studentId}
+                  <span className="font-medium">Student ID:</span>{' '}
+                  {profileUser.studentId}
                 </div>
+              </div>
+
+              {/* Show ChatButton only for other users and when current user exists */}
+              {!isOwnProfile && currentUser && (
+                <div className="mt-4">
+                  <ChatButton
+                    otherUserId={profileUser.id}
+                    otherUserName={profileUser.name}
+                    otherUserAvatar={profileUser.profileImage}
+                    // rideId is optional – creates a direct chat (fallback UI)
+                  />
+                </div>
+              )}
+
+              {/* Debug info – remove in production */}
+              <div className="mt-2 text-xs text-muted-foreground">
+                Debug: isOwnProfile = {String(isOwnProfile)}, currentUser exists ={' '}
+                {String(!!currentUser)}
               </div>
             </div>
           </div>
         </CardContent>
       </Card>
 
+      {/* Statistics Card */}
       <Card>
         <CardHeader>
           <CardTitle>Statistics</CardTitle>
         </CardHeader>
-
         <CardContent>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <div className="text-center">
               <div className="text-3xl font-bold text-primary">
-                {(user.rating ?? 0).toFixed(1)}
+                {(profileUser.rating ?? 0).toFixed(1)}
               </div>
-              <div className="text-sm text-muted-foreground">
-                Rating
-              </div>
+              <div className="text-sm text-muted-foreground">Rating</div>
             </div>
 
             <div className="text-center">
               <div className="text-3xl font-bold text-primary">
-                {user.isVerified ? 'Yes' : 'No'}
+                {profileUser.isVerified ? 'Yes' : 'No'}
               </div>
-              <div className="text-sm text-muted-foreground">
-                Verified
-              </div>
+              <div className="text-sm text-muted-foreground">Verified</div>
             </div>
 
             <div className="text-center">
               <div className="text-3xl font-bold text-primary">
-                {user.university}
+                {profileUser.university}
               </div>
-              <div className="text-sm text-muted-foreground">
-                University
-              </div>
+              <div className="text-sm text-muted-foreground">University</div>
             </div>
 
             <div className="text-center">
               <div className="text-3xl font-bold text-primary">
-                {new Date(
-                  user.createdAt
-                ).getFullYear()}
+                {new Date(profileUser.createdAt).getFullYear()}
               </div>
-              <div className="text-sm text-muted-foreground">
-                Member Since
-              </div>
+              <div className="text-sm text-muted-foreground">Member Since</div>
             </div>
           </div>
         </CardContent>
       </Card>
 
+      {/* About Card */}
       <Card>
         <CardHeader>
           <CardTitle>About</CardTitle>
         </CardHeader>
-
         <CardContent>
           <div className="space-y-4">
             <div>
-              <p className="text-sm text-muted-foreground mb-2">
-                Member Since
-              </p>
-
+              <p className="text-sm text-muted-foreground mb-2">Member Since</p>
               <p className="font-semibold">
-                {new Date(
-                  user.createdAt
-                ).toLocaleDateString('en-US', {
+                {new Date(profileUser.createdAt).toLocaleDateString('en-US', {
                   year: 'numeric',
                   month: 'long',
                   day: 'numeric',
@@ -196,13 +205,8 @@ export default function UserProfile({
             </div>
 
             <div>
-              <p className="text-sm text-muted-foreground mb-2">
-                Account Status
-              </p>
-
-              <Badge variant="secondary">
-                Active
-              </Badge>
+              <p className="text-sm text-muted-foreground mb-2">Account Status</p>
+              <Badge variant="secondary">Active</Badge>
             </div>
           </div>
         </CardContent>

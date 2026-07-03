@@ -1,4 +1,3 @@
-// lib/socket.ts
 import { io, Socket } from 'socket.io-client';
 import { DriverLocation } from './types';
 
@@ -11,6 +10,7 @@ let geoWatchId: number | null = null;
 
 // ---- Chat Socket ----
 let chatSocket: Socket | null = null;
+let chatSocketToken: string | null = null;
 
 /* =========================
    RIDE SOCKET – INIT, CLOSE, JOIN, LOCATION
@@ -144,7 +144,6 @@ export const startGPSTracking = (
         rideId,
         lat: latitude,
         lng: longitude,
-        accuracy,
         speed: speed || 0,
       });
     },
@@ -211,48 +210,161 @@ export async function searchLocation(
 }
 
 /* =========================
-   CHAT SOCKET
+   CHAT SOCKET – JWT AUTH (Socket.IO v4)
 ========================= */
-export const connectChatSocket = (userId: number): Socket => {
-  if (chatSocket?.connected) return chatSocket;
+/**
+ * Connect to the chat socket with JWT authentication.
+ * Returns null if no token is present or connection fails.
+ * Sends token both in `auth` (standard) and `query` (fallback).
+ */
+export const connectChatSocket = (userId: number): Socket | null => {
+  const token = typeof window !== 'undefined' ? localStorage.getItem('authToken') : null;
+
+  if (!token) {
+    console.warn('[chat socket] missing auth token, skipping connection');
+    return null;
+  }
+
+  console.log(`[chat socket] token (first 20 chars): ${token.substring(0, 20)}...`);
+
+  // Reuse existing connection if same token and connected
+  if (chatSocket?.connected && chatSocketToken === token) {
+    return chatSocket;
+  }
+
+  // Clean up previous socket
+  if (chatSocket) {
+    chatSocket.disconnect();
+    chatSocket = null;
+    chatSocketToken = null;
+  }
+
+  chatSocketToken = token;
+
+  // Send token in both `auth` and `query` for compatibility
   chatSocket = io(`${SOCKET_URL}/chat`, {
-    query: { userId: String(userId) },
+    auth: { token },
+    query: { token },
     transports: ['websocket'],
   });
+
+  chatSocket.on('connect', () => {
+    console.log(`[chat socket] connected (user: ${userId})`);
+  });
+
+  chatSocket.on('disconnect', () => {
+    console.log('[chat socket] disconnected');
+  });
+
+  chatSocket.on('connect_error', (err) => {
+    console.error('[chat socket] connect_error:', err.message);
+  });
+
+  chatSocket.on('exception', (err) => {
+    console.error('[chat socket] exception:', JSON.stringify(err, null, 2));
+  });
+
   return chatSocket;
 };
 
 export const getChatSocket = (): Socket | null => chatSocket;
 
 export const closeChatSocket = () => {
-  chatSocket?.disconnect();
-  chatSocket = null;
+  if (chatSocket) {
+    chatSocket.disconnect();
+    chatSocket = null;
+    chatSocketToken = null;
+    console.log('[chat socket] closed manually');
+  }
 };
 
-export const sendChatMessage = (
-  receiverId: number,
+/* =========================
+   CHAT SOCKET – ROOM JOINING
+========================= */
+export const joinChatRoom = (rideId: string) => {
+  if (!chatSocket?.connected) {
+    console.warn('[chat socket] not connected, cannot join room');
+    return;
+  }
+  chatSocket.emit('joinChat', { rideId });
+};
+
+export const joinDirectRoom = (otherUserId: string) => {
+  if (!chatSocket?.connected) {
+    console.warn('[chat socket] not connected, cannot join direct room');
+    return;
+  }
+  chatSocket.emit('joinDirect', { otherUserId });
+};
+
+/* =========================
+   CHAT SOCKET – SEND MESSAGES
+========================= */
+/**
+ * Send a chat message (ride or direct).
+ * Use `rideId` for ride chat, `receiverId` for direct chat.
+ */
+export const sendChatMessage = (payload: {
+  rideId?: string;
+  receiverId?: string;
+  content: string;
+  type?: 'text' | 'image';
+}) => {
+  if (!chatSocket?.connected) {
+    console.warn('[chat socket] not connected, cannot send message');
+    return;
+  }
+  chatSocket.emit('sendMessage', payload);
+};
+
+/**
+ * Legacy alias for direct message (kept for backward compatibility).
+ * Prefer using sendChatMessage({ receiverId, content, type }).
+ */
+export const sendDirectMessage = (
+  receiverId: string,
   content: string,
-  rideId?: string,
+  type: 'text' | 'image' = 'text'
 ) => {
-  chatSocket?.emit('chat:send', { receiverId, content, rideId });
+  sendChatMessage({ receiverId, content, type });
 };
 
-export const getChatHistory = (otherUserId: number, rideId?: string) => {
-  chatSocket?.emit('chat:history', { otherUserId, rideId });
+/**
+ * Send typing indicator (ride or direct).
+ * Use `rideId` for ride chat, `receiverId` for direct chat.
+ */
+export const sendTyping = (payload: {
+  rideId?: string;
+  receiverId?: string;
+  isTyping: boolean;
+}) => {
+  if (!chatSocket?.connected) return;
+  chatSocket.emit('typing', payload);
 };
 
+/* =========================
+   CHAT SOCKET – SUBSCRIBERS
+========================= */
 export const subscribeToChatMessages = (cb: (message: any) => void) => {
-  chatSocket?.on('chat:message', cb);
+  chatSocket?.on('newMessage', cb);
 };
 
 export const unsubscribeFromChatMessages = () => {
-  chatSocket?.off('chat:message');
+  chatSocket?.off('newMessage');
 };
 
-export const subscribeToChatHistory = (cb: (messages: any[]) => void) => {
-  chatSocket?.on('chat:history', cb);
+export const subscribeToJoinedChat = (cb: (data: any) => void) => {
+  chatSocket?.on('joinedChat', cb);
 };
 
-export const unsubscribeFromChatHistory = () => {
-  chatSocket?.off('chat:history');
+export const unsubscribeFromJoinedChat = () => {
+  chatSocket?.off('joinedChat');
+};
+
+export const subscribeToJoinedDirect = (cb: (data: any) => void) => {
+  chatSocket?.on('joinedDirect', cb);
+};
+
+export const unsubscribeFromJoinedDirect = () => {
+  chatSocket?.off('joinedDirect');
 };

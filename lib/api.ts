@@ -1,4 +1,3 @@
-// lib/api.ts
 import axios, { AxiosError } from 'axios';
 import { AuthResponse, User, Ride } from './types';
 import { LoginInput, RegisterInput, CreateRideInput } from './schemas';
@@ -69,7 +68,6 @@ export const ridesAPI = {
     const response = await apiClient.post('/rides', data);
     return response.data;
   },
-  // ✅ NEW – Get rides created by the current user
   getMyRides: async () => {
     const response = await apiClient.get('/rides/my');
     return response.data;
@@ -78,37 +76,26 @@ export const ridesAPI = {
 
 // ==================== BOOKINGS ====================
 export const bookingsAPI = {
-  // Create a new booking (passenger requests a seat)
   createBooking: async (rideId: string) => {
     const response = await apiClient.post('/bookings', { rideId });
     return response.data;
   },
-
-  // Get all bookings for the current user (passenger or driver)
   getMyBookings: async () => {
     const response = await apiClient.get('/bookings/my');
     return response.data;
   },
-
-  // Accept a booking (driver only)
   acceptBooking: async (bookingId: string) => {
     const response = await apiClient.patch(`/bookings/${bookingId}/accept`);
     return response.data;
   },
-
-  // Reject a booking (driver only)
   rejectBooking: async (bookingId: string) => {
     const response = await apiClient.patch(`/bookings/${bookingId}/reject`);
     return response.data;
   },
-
-  // Confirm booking (passenger confirms after acceptance)
   confirmBooking: async (bookingId: string) => {
     const response = await apiClient.patch(`/bookings/${bookingId}/confirm`);
     return response.data;
   },
-
-  // ✅ NEW – Get pending bookings for a specific ride (driver only)
   getBookingsForRide: async (rideId: string) => {
     const response = await apiClient.get(`/bookings/ride/${rideId}`);
     return response.data;
@@ -128,6 +115,71 @@ export const usersAPI = {
   getById: async (id: string): Promise<User> => {
     const response = await apiClient.get(`/users/${id}`);
     return response.data;
+  },
+};
+
+// ==================== CHAT (Correct Backend Endpoints) ====================
+export const chatAPI = {
+  /**
+   * Get paginated chat history for a ride
+   * GET /chats/ride/:rideId?page=1&limit=50
+   */
+  getChatHistory: async (rideId: string, page = 1, limit = 50) => {
+    const response = await apiClient.get(`/chats/ride/${rideId}`, {
+      params: { page, limit },
+    });
+    return response.data; // { items, total, page, limit, totalPages }
+  },
+
+  /**
+   * Alias for getChatHistory (used by ChatWindow)
+   */
+  getRideHistory: async (rideId: string, page = 1, limit = 50) => {
+    return chatAPI.getChatHistory(rideId, page, limit);
+  },
+
+  /**
+   * Upload an image for chat messages
+   * POST /chats/upload
+   */
+  uploadImage: async (file: File) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const response = await apiClient.post('/chats/upload', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return response.data; // { url: string }
+  },
+
+  // ---- Optional / Future endpoints (may require backend implementation) ----
+
+  /**
+   * Get direct message history with a specific user
+   * GET /chat/direct/:userId?page=1&limit=50
+   * (Not yet implemented in backend – placeholder)
+   */
+  getDirectHistory: async (userId: string, page = 1, limit = 50) => {
+    const response = await apiClient.get(`/chat/direct/${userId}`, {
+      params: { page, limit },
+    });
+    return response.data;
+  },
+
+  /**
+   * Get total unread message count
+   * GET /chat/unread (Not yet implemented – placeholder)
+   */
+  getUnreadCount: async () => {
+    const response = await apiClient.get('/chat/unread');
+    return response.data.unread;
+  },
+
+  /**
+   * Mark a specific message as read
+   * PATCH /chat/read/:messageId (Not yet implemented – placeholder)
+   */
+  markAsRead: async (messageId: string) => {
+    await apiClient.patch(`/chat/read/${messageId}`);
   },
 };
 

@@ -1,100 +1,138 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import {
-  MapContainer,
-  TileLayer,
-  Marker,
-  Popup,
-  Polyline,
-  useMap,
-} from 'react-leaflet';
-import L from 'leaflet';
-import { Location, DriverLocation } from '@/lib/types';
+import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
+import L from 'leaflet';
+import { DriverLocation } from '@/lib/types';
 
-/* =========================
-   ICONS
-========================= */
-const startIcon = new L.Icon({
-  iconUrl:
-    'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-green.png',
-  shadowUrl:
-    'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
-  iconSize: [25, 41],
-  iconAnchor: [12, 41],
+// Fix default marker icons
+delete (L.Icon.Default.prototype as any)._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
+  iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png',
+  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
 });
 
-const endIcon = new L.Icon({
-  iconUrl:
-    'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-red.png',
-  shadowUrl:
-    'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
+// Custom marker icons
+const departureIcon = new L.Icon({
+  iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png',
+  iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
+  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
   iconSize: [25, 41],
   iconAnchor: [12, 41],
+  popupAnchor: [1, -34],
+  shadowSize: [41, 41],
 });
 
-const driverIcon = new L.Icon({
-  iconUrl:
-    'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-blue.png',
-  shadowUrl:
-    'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
+const arrivalIcon = new L.Icon({
+  iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png',
+  iconRetinaUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png',
+  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
   iconSize: [25, 41],
   iconAnchor: [12, 41],
+  popupAnchor: [1, -34],
+  shadowSize: [41, 41],
 });
 
-/* =========================
-   MAP CONTROLLER (GPS follow)
-========================= */
-function MapController({
-  driverLocation,
-  departureLocation,
-  arrivalLocation,
-}: {
-  driverLocation?: DriverLocation | null;
-  departureLocation: Location;
-  arrivalLocation: Location;
-}) {
-  const map = useMap();
-  const lastDriverRef = useRef<DriverLocation | null>(null);
-  const didFitRef = useRef(false);
-
-  useEffect(() => {
-    if (didFitRef.current) return;
-    const bounds = L.latLngBounds([
-      [departureLocation.lat, departureLocation.lng],
-      [arrivalLocation.lat, arrivalLocation.lng],
-    ]);
-    map.fitBounds(bounds, { padding: [50, 50], maxZoom: 15 });
-    didFitRef.current = true;
-  }, [map, departureLocation, arrivalLocation]);
-
-  useEffect(() => {
-    if (!driverLocation) return;
-    const last = lastDriverRef.current;
-    const moved =
-      !last ||
-      Math.abs(driverLocation.lat - last.lat) > 0.0003 ||
-      Math.abs(driverLocation.lng - last.lng) > 0.0003;
-    if (moved) {
-      map.panTo([driverLocation.lat, driverLocation.lng], { animate: true });
-      lastDriverRef.current = driverLocation;
-    }
-  }, [driverLocation, map]);
-
-  return null;
-}
-
-/* =========================
-   MAIN COMPONENT
-========================= */
 interface RideMapProps {
-  departureLocation?: Location;
-  arrivalLocation?: Location;
+  departureLocation: { lat: number; lng: number; address: string };
+  arrivalLocation: { lat: number; lng: number; address: string };
   driverLocation?: DriverLocation | null;
   multipleDrivers?: DriverLocation[];
-  enableTracking?: boolean;
-  showAccuracy?: boolean;
+}
+
+// Component to handle route fetching and bounds fitting
+function MapController({ 
+  departure, 
+  arrival, 
+  driverLoc 
+}: { 
+  departure: { lat: number; lng: number; address: string };
+  arrival: { lat: number; lng: number; address: string };
+  driverLoc?: DriverLocation | null;
+}) {
+  const map = useMap();
+  const [routePoints, setRoutePoints] = useState<[number, number][]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    // Ensure the Leaflet instance is fully mounted before mutating it.
+    const run = async () => {
+      if (!map) return;
+
+      try {
+        const response = await fetch(
+          `https://router.project-osrm.org/route/v1/driving/${departure.lng},${departure.lat};${arrival.lng},${arrival.lat}?overview=full&geometries=geojson`
+        );
+        const data = await response.json();
+        if (cancelled) return;
+
+        if (data.routes && data.routes.length > 0) {
+          const coords = data.routes[0].geometry.coordinates.map(
+            (coord: [number, number]) => [coord[1], coord[0]] as [number, number]
+          );
+          setRoutePoints(coords);
+          
+          map.whenReady(() => {
+            if (cancelled || coords.length === 0) return;
+            const bounds = L.latLngBounds(coords);
+            map.fitBounds(bounds, { padding: [50, 50], maxZoom: 15 });
+          });
+        } else {
+          // Fallback: fit to departure and arrival points
+          map.whenReady(() => {
+            if (cancelled) return;
+            const bounds = L.latLngBounds(
+              [departure.lat, departure.lng],
+              [arrival.lat, arrival.lng]
+            );
+            map.fitBounds(bounds, { padding: [50, 50], maxZoom: 15 });
+          });
+        }
+      } catch (error) {
+        console.error('Route fetch error:', error);
+        if (!cancelled) {
+          map.whenReady(() => {
+            if (cancelled) return;
+            const bounds = L.latLngBounds(
+              [departure.lat, departure.lng],
+              [arrival.lat, arrival.lng]
+            );
+            map.fitBounds(bounds, { padding: [50, 50], maxZoom: 15 });
+          });
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    run();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [map, departure, arrival]);
+
+  // Update map when driver location changes
+  useEffect(() => {
+    if (!map || !driverLoc) return;
+    // Optionally pan to driver location or update marker position
+    // This is handled via marker component re-rendering
+  }, [map, driverLoc]);
+
+  return (
+    <>
+      {routePoints.length > 0 && (
+        <Polyline
+          positions={routePoints}
+          pathOptions={{ color: 'blue', weight: 4, opacity: 0.7 }}
+        />
+      )}
+    </>
+  );
 }
 
 export default function RideMap({
@@ -102,133 +140,99 @@ export default function RideMap({
   arrivalLocation,
   driverLocation,
   multipleDrivers = [],
-  enableTracking = true,
-  showAccuracy = true,
 }: RideMapProps) {
-  const [isClient, setIsClient] = useState(false);
-  const [mapReady, setMapReady] = useState(false);
-  const [routePoints, setRoutePoints] = useState<[number, number][]>([]);
-  const [loadingRoute, setLoadingRoute] = useState(false);
+  const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
-    setIsClient(true);
+    setMounted(true);
   }, []);
 
-  // Fetch route – only after map is ready
-  useEffect(() => {
-    if (!departureLocation || !arrivalLocation || !mapReady) return;
-
-    const fetchRoute = async () => {
-      setLoadingRoute(true);
-      try {
-        const url = `https://router.project-osrm.org/route/v1/driving/${departureLocation.lng},${departureLocation.lat};${arrivalLocation.lng},${arrivalLocation.lat}?overview=full&geometries=geojson`;
-        const res = await fetch(url);
-        const data = await res.json();
-
-        if (data.routes && data.routes.length > 0) {
-          const coords = data.routes[0].geometry.coordinates.map(
-            ([lng, lat]: [number, number]) => [lat, lng] as [number, number]
-          );
-          setRoutePoints(coords);
-        } else {
-          setRoutePoints([
-            [departureLocation.lat, departureLocation.lng],
-            [arrivalLocation.lat, arrivalLocation.lng],
-          ]);
-        }
-      } catch (error) {
-        console.error('Route fetch error:', error);
-        setRoutePoints([
-          [departureLocation.lat, departureLocation.lng],
-          [arrivalLocation.lat, arrivalLocation.lng],
-        ]);
-      } finally {
-        setLoadingRoute(false);
-      }
-    };
-
-    fetchRoute();
-  }, [departureLocation, arrivalLocation, mapReady]);
-
-  // Safety guard
-  if (!isClient || !departureLocation || !arrivalLocation) {
-    return <div className="w-full h-96 rounded-lg border bg-gray-100 animate-pulse" />;
+  if (!mounted) {
+    return <div className="h-96 w-full rounded-lg bg-gray-200 animate-pulse" />;
   }
 
-  const allDrivers = driverLocation
-    ? [driverLocation, ...multipleDrivers]
-    : multipleDrivers;
-
-  const uniqueDrivers = Array.from(
-    new Map(allDrivers.map((d) => [d.driverId, d])).values()
-  ).slice(0, 10);
+  const center = [
+    (departureLocation.lat + arrivalLocation.lat) / 2,
+    (departureLocation.lng + arrivalLocation.lng) / 2,
+  ] as [number, number];
 
   return (
-    <div className="w-full h-96 rounded-lg overflow-hidden border relative">
+    <div className="h-96 w-full rounded-lg overflow-hidden">
       <MapContainer
-        key="ride-map"
-        center={[departureLocation.lat, departureLocation.lng]}
-        zoom={12}
+        center={center}
+        zoom={13}
         style={{ height: '100%', width: '100%' }}
         zoomControl={true}
-        whenReady={() => {
-          console.log('✅ Map is ready');
-          setMapReady(true);
-        }}
+        scrollWheelZoom={true}
+        dragging={true}
       >
-        <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+        <TileLayer
+          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+        />
 
-        {enableTracking && (
-          <MapController
-            driverLocation={driverLocation}
-            departureLocation={departureLocation}
-            arrivalLocation={arrivalLocation}
-          />
-        )}
+        {/* Route controller */}
+        <MapController 
+          departure={departureLocation}
+          arrival={arrivalLocation}
+          driverLoc={driverLocation}
+        />
 
-        {routePoints.length > 0 && (
-          <Polyline
-            positions={routePoints}
-            color="#2563eb"
-            weight={4}
-            opacity={0.8}
-            smoothFactor={1}
-          />
-        )}
-
-        <Marker position={[departureLocation.lat, departureLocation.lng]} icon={startIcon}>
-          <Popup>Departure<br />{departureLocation.address}</Popup>
+        {/* Departure Marker */}
+        <Marker position={[departureLocation.lat, departureLocation.lng]} icon={departureIcon}>
+          <Popup>
+            <strong>Departure</strong>
+            <br />
+            {departureLocation.address}
+          </Popup>
         </Marker>
 
-        <Marker position={[arrivalLocation.lat, arrivalLocation.lng]} icon={endIcon}>
-          <Popup>Arrival<br />{arrivalLocation.address}</Popup>
+        {/* Arrival Marker */}
+        <Marker position={[arrivalLocation.lat, arrivalLocation.lng]} icon={arrivalIcon}>
+          <Popup>
+            <strong>Arrival</strong>
+            <br />
+            {arrivalLocation.address}
+          </Popup>
         </Marker>
 
-        {uniqueDrivers.map((driver) => (
-          <Marker key={driver.driverId} position={[driver.lat, driver.lng]} icon={driverIcon}>
-            <Popup>Driver {driver.driverId.slice(0, 8)}</Popup>
+        {/* Driver Location Marker (if available) */}
+        {driverLocation && (
+          <Marker
+            position={[driverLocation.lat, driverLocation.lng]}
+            icon={new L.Icon({
+              iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png',
+              iconRetinaUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png',
+              shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
+              iconSize: [25, 41],
+              iconAnchor: [12, 41],
+              popupAnchor: [1, -34],
+              shadowSize: [41, 41],
+            })}
+          >
+            <Popup>Driver Location</Popup>
+          </Marker>
+        )}
+
+        {/* Multiple driver locations (for debugging or additional drivers) */}
+        {multipleDrivers.map((loc, idx) => (
+          <Marker
+            key={idx}
+            position={[loc.lat, loc.lng]}
+            icon={new L.Icon({
+              iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-yellow.png',
+              iconRetinaUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-yellow.png',
+              shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
+              iconSize: [25, 41],
+              iconAnchor: [12, 41],
+              popupAnchor: [1, -34],
+              shadowSize: [41, 41],
+            })}
+          >
+            <Popup>Driver {idx + 1}</Popup>
           </Marker>
         ))}
       </MapContainer>
-
-      {loadingRoute && (
-        <div className="absolute top-4 left-4 bg-white p-2 rounded shadow text-xs">
-          Loading route...
-        </div>
-      )}
-
-      {showAccuracy && driverLocation && (
-        <div className="absolute bottom-4 left-4 bg-white p-3 rounded shadow text-xs">
-          <p>Accuracy: {driverLocation.accuracy ?? 'N/A'} m</p>
-          <p>Speed: {driverLocation.speed ?? 0} km/h</p>
-        </div>
-      )}
-
-      {uniqueDrivers.length > 1 && (
-        <div className="absolute top-4 right-4 bg-blue-600 text-white w-8 h-8 flex items-center justify-center rounded-full">
-          {uniqueDrivers.length}
-        </div>
-      )}
     </div>
   );
 }
